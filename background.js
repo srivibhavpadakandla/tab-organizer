@@ -14,6 +14,9 @@ const AUTO_PALETTE = ['blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan'
 const TAB_GROUP_ID_NONE = -1; // chrome.tabGroups.TAB_GROUP_ID_NONE
 const DEBOUNCE_MS = 700; // batch rapid tab bursts into one (smart-auto) pass
 const URL_TEST_CAP = 2000; // cap URL length fed to user regex/glob (ReDoS guard)
+const OTHER_TITLE = 'Other'; // catch-all group for singleton tabs
+const OTHER_COLOR = 'grey';
+const OTHER_KEY = 'other';
 
 const NATIVE_HOST = 'com.tab_organizer.claude';
 const NATIVE_TIMEOUT_MS = 90000; // a CLI cluster call can take 10-40s
@@ -194,12 +197,9 @@ async function groupWindow(windowId) {
 
   for (const [, b] of buckets) {
     const meets = b.fromRule ? b.tabs.length >= 1 : b.tabs.length >= Math.max(1, settings.minTabs || 2);
-    if (!meets) {
-      // Dissolve below-threshold tabs only when they sit in a group WE created.
-      const stray = b.tabs.filter((t) => t.groupId !== TAB_GROUP_ID_NONE && owned[t.groupId]).map((t) => t.id);
-      if (stray.length) { try { await chrome.tabs.ungroup(stray); } catch (e) {} }
-      continue;
-    }
+    // Below threshold → leave for consolidateSingletons(), which sweeps it into
+    // the shared "Other" group (or back out once it reaches 2 tabs).
+    if (!meets) continue;
     const existing = groupsByKey.get(b.key);
     let groupId = existing ? existing.id : null;
     const toAdd = b.tabs.filter((t) => t.groupId !== groupId).map((t) => t.id); // skip already-correct tabs
@@ -227,6 +227,55 @@ async function groupWindow(windowId) {
     }
   }
   if (changed) await setOwned(owned);
+  await consolidateSingletons(windowId);
+}
+
+// Funnel singleton groups into one shared "Other" group, and pull tabs back out
+// once their own group reaches 2 tabs. Only touches groups WE created (never
+// user/manual groups) and never explicit rule groups. "Other" only exists when
+// it would hold >= 2 tabs; a single lonely tab is left ungrouped.
+async function consolidateSingletons(windowId) {
+  const owned = await getOwned();
+  const groups = await chrome.tabGroups.query({ windowId });
+  const tabs = await chrome.tabs.query({ windowId });
+  const existingIds = new Set(groups.map((g) => g.id));
+  for (const idStr of Object.keys(owned)) if (!existingIds.has(Number(idStr))) delete owned[idStr];
+
+  const byGroup = {};
+  for (const t of tabs) if (t.groupId !== TAB_GROUP_ID_NONE) (byGroup[t.groupId] || (byGroup[t.groupId] = [])).push(t);
+
+  const otherGroup = groups.find((g) => owned[g.id] && owned[g.id].key === OTHER_KEY) || null;
+
+  // Tabs that should live in "Other": singletons in owned auto groups (not rule,
+  // not Other), plus any currently-ungrouped eligible tabs.
+  const singletons = [];
+  for (const g of groups) {
+    if (otherGroup && g.id === otherGroup.id) continue;
+    const rec = owned[g.id];
+    if (!rec || rec.key.startsWith('rule:')) continue;
+    const gt = byGroup[g.id] || [];
+    if (gt.length === 1) singletons.push(gt[0].id);
+  }
+  const ungrouped = tabs.filter((t) => isEligibleTab(t) && t.groupId === TAB_GROUP_ID_NONE).map((t) => t.id);
+  const otherResidents = otherGroup ? (byGroup[otherGroup.id] || []).map((t) => t.id) : [];
+
+  const incoming = [...new Set([...singletons, ...ungrouped])]; // not yet in Other
+  const want = [...new Set([...otherResidents, ...incoming])];
+
+  if (want.length >= 2) {
+    if (!otherGroup) {
+      const gid = await chrome.tabs.group({ createProperties: { windowId }, tabIds: incoming });
+      await chrome.tabGroups.update(gid, { title: OTHER_TITLE, color: OTHER_COLOR });
+      owned[gid] = { key: OTHER_KEY, color: OTHER_COLOR };
+    } else if (incoming.length) {
+      await chrome.tabs.group({ groupId: otherGroup.id, tabIds: incoming });
+    }
+  } else {
+    // Fewer than 2 tabs destined for Other → don't keep a 1-tab Other group.
+    if (want.length) { try { await chrome.tabs.ungroup(want); } catch (e) {} }
+    if (otherGroup) delete owned[otherGroup.id];
+  }
+  await setOwned(owned);
 }
 
 async function groupAllWindows() {
@@ -384,26 +433,34 @@ async function requestClusters(payload, existingGroups) {
 async function smartAutoClassify(windowId) {
   const eligible = (await chrome.tabs.query({ windowId })).filter(isEligibleTab);
   const ungrouped = eligible.filter((t) => t.groupId === TAB_GROUP_ID_NONE);
-  if (!ungrouped.length) return true; // already sorted — skip the AI call entirely
+  // Only spend an AI call when there's a genuinely new (ungrouped) tab. Otherwise
+  // just reconcile the "Other" group (e.g. a group that dropped to 1 tab).
+  if (!ungrouped.length) { await consolidateSingletons(windowId); return true; }
 
   const owned = await getOwned();
   const existingGroups = await chrome.tabGroups.query({ windowId });
   const existingIds = new Set(existingGroups.map((g) => g.id));
   for (const idStr of Object.keys(owned)) if (!existingIds.has(Number(idStr))) delete owned[idStr];
-  const ownedTitles = [...new Set(existingGroups.filter((g) => owned[g.id] && g.title).map((g) => g.title))];
 
-  const payload = ungrouped.map((t, i) => ({ id: i, title: (t.title || '').slice(0, 200), url: t.url }));
+  const otherGroup = existingGroups.find((g) => owned[g.id] && owned[g.id].key === OTHER_KEY) || null;
+  // Reconsider new tabs AND current "Other" residents, so a singleton can rejoin
+  // a real topic group once a sibling appears.
+  const otherResidents = otherGroup ? eligible.filter((t) => t.groupId === otherGroup.id) : [];
+  const candidates = [...ungrouped, ...otherResidents];
+  const ownedTitles = [...new Set(existingGroups.filter((g) => owned[g.id] && owned[g.id].key !== OTHER_KEY && g.title).map((g) => g.title))];
+
+  const payload = candidates.map((t, i) => ({ id: i, title: (t.title || '').slice(0, 200), url: t.url }));
   let clusters;
   try { ({ clusters } = await requestClusters(payload, ownedTitles)); }
   catch (e) { return false; } // no CLI/key → let caller use domain grouping
 
   const groupsByKey = new Map();
-  for (const g of existingGroups) { const rec = owned[g.id]; if (rec && !groupsByKey.has(rec.key)) groupsByKey.set(rec.key, g); }
+  for (const g of existingGroups) { const rec = owned[g.id]; if (rec && rec.key !== OTHER_KEY && !groupsByKey.has(rec.key)) groupsByKey.set(rec.key, g); }
   for (const cl of (Array.isArray(clusters) ? clusters : [])) {
     const title = (String((cl && cl.groupName) || 'Group').trim() || 'Group').slice(0, 40);
     const color = normalizeColor(cl && cl.color) || autoColorForKey(title);
-    const ids = clusterTabIds(cl).map((i) => ungrouped[i]).filter(Boolean).map((t) => t.id);
-    if (!ids.length) continue;
+    const ids = clusterTabIds(cl).map((i) => candidates[i]).filter(Boolean).map((t) => t.id);
+    if (ids.length < 2) continue; // singletons → "Other" via consolidateSingletons
     const key = 'ai:' + title;
     const existing = groupsByKey.get(key);
     let groupId = existing ? existing.id : null;
@@ -417,6 +474,7 @@ async function smartAutoClassify(windowId) {
     owned[groupId] = { key, color };
   }
   await setOwned(owned);
+  await consolidateSingletons(windowId);
   return true;
 }
 
@@ -455,17 +513,16 @@ async function smartGroupWindow(windowId) {
   const existingIds = new Set(existingGroups.map((g) => g.id));
   for (const idStr of Object.keys(owned)) if (!existingIds.has(Number(idStr))) delete owned[idStr];
   const groupsByKey = new Map();
-  for (const g of existingGroups) { const rec = owned[g.id]; if (rec && !groupsByKey.has(rec.key)) groupsByKey.set(rec.key, g); }
+  for (const g of existingGroups) { const rec = owned[g.id]; if (rec && rec.key !== OTHER_KEY && !groupsByKey.has(rec.key)) groupsByKey.set(rec.key, g); }
 
   const placed = new Set();
   let applied = 0;
   for (const cl of clusters) {
     const title = (String((cl && cl.groupName) || 'Group').trim() || 'Group').slice(0, 40);
     const color = normalizeColor(cl && cl.color) || autoColorForKey(title);
-    const tabObjs = clusterTabIds(cl).map((i) => tabs[i]).filter(Boolean);
-    const ids = tabObjs.map((t) => t.id);
-    if (!ids.length) continue;
-    tabObjs.forEach((t) => placed.add(t.id));
+    const ids = clusterTabIds(cl).map((i) => tabs[i]).filter(Boolean).map((t) => t.id);
+    if (ids.length < 2) continue; // singleton clusters fall through to "Other"
+    ids.forEach((id) => placed.add(id));
     const key = 'ai:' + title;
     const existing = groupsByKey.get(key);
     let groupId = existing ? existing.id : null;
@@ -480,11 +537,14 @@ async function smartGroupWindow(windowId) {
     owned[groupId] = { key, color };
     applied++;
   }
-  // Make re-clustering idempotent: any eligible tab the AI didn't place but that
-  // sits in a group WE own is ungrouped (so stale assignments don't linger).
-  const leftovers = tabs.filter((t) => !placed.has(t.id) && t.groupId !== TAB_GROUP_ID_NONE && owned[t.groupId]).map((t) => t.id);
-  if (leftovers.length) { try { await chrome.tabs.ungroup(leftovers); } catch (e) {} }
+  // Free every owned (non-Other) tab that didn't land in a real (>=2) group;
+  // consolidateSingletons then sweeps leftovers + singletons into "Other".
+  const toFree = tabs
+    .filter((t) => !placed.has(t.id) && t.groupId !== TAB_GROUP_ID_NONE && owned[t.groupId] && owned[t.groupId].key !== OTHER_KEY)
+    .map((t) => t.id);
+  if (toFree.length) { try { await chrome.tabs.ungroup(toFree); } catch (e) {} }
   await setOwned(owned);
+  await consolidateSingletons(windowId);
   return { ok: true, groups: applied, via, placed: placed.size, total: tabs.length };
 }
 
