@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>Tab Organizer</title>
+</head>
+<body>
+  <header class="bar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span class="brand-name">Tab&nbsp;Organizer</span>
+    </div>
+    <label class="switch" title="Toggle automatic grouping">
+      <input type="checkbox" id="autoToggle" aria-label="Toggle automatic grouping" />
+      <span class="track"><span class="thumb"></span></span>
+    </label>
+  </header>
+
+  <p class="auto-label" id="autoLabel">Auto-grouping on</p>
+
+  <div class="mode" id="modeRow" role="group" aria-label="Auto-grouping mode">
+    <button class="seg" id="segSmart" data-mode="smart" title="AI sorts new tabs by topic, automatically">✦ Smart</button>
+    <button class="seg" id="segDomain" data-mode="domain" title="Instantly group new tabs by website">▦ Domain</button>
+  </div>
+
+  <div class="actions">
+    <button class="btn btn-primary" id="btnGroup" data-msg="group-all">
+      <span class="ico">▦</span> Group all now
+    </button>
+    <button class="btn btn-accent" id="btnSmart" data-msg="smart-group">
+      <span class="ico">✦</span> Smart group
+    </button>
+    <button class="btn" id="btnCollapse" data-msg="collapse-all">
+      <span class="ico">⌄</span> Collapse all but active
+    </button>
+    <button class="btn btn-ghost" id="btnUngroup" data-msg="ungroup-all">
+      <span class="ico">⊘</span> Ungroup all
+    </button>
+  </div>
+
+  <section class="groups">
+    <div class="groups-head">
+      <span>Groups</span>
+      <span class="pill" id="groupCount">0</span>
+    </div>
+    <ul class="group-list" id="groupList"></ul>
+    <p class="empty" id="emptyState">No groups in this window yet.</p>
+  </section>
+
+  <footer class="foot">
+    <button class="link" id="openOptions">⚙ Rules &amp; API key</button>
+    <span class="status" id="status"></span>
+  </footer>
+
+  <script src="popup.js"></script>
+</body>
+</html>

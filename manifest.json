@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Organizer",
+  "version": "1.0.0",
+  "description": "Auto-organises open tabs into Chrome tab groups by domain, with custom rules and on-demand AI semantic grouping.",
+  "permissions": [
+    "tabs",
+    "tabGroups",
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://api.anthropic.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Tab Organizer",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_page": "options.html",
+  "commands": {
+    "group-all": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+G",
+        "mac": "Command+Shift+G"
+      },
+      "description": "Group all tabs now"
+    },
+    "ungroup-all": {
+      "description": "Ungroup all tabs"
+    },
+    "collapse-all": {
+      "description": "Collapse all groups but the active one"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAs1B4zvSANijjBBlMB4GAKnJHqiNJGqC6MY4K08MfjmU7FEbYrNe3oxt4Kao17zAYs6KXYTAzXHuKv+nh4NrdF7KEC3fqYo6vRfMLzCVXAcaKnR3NvFIO7ZUn9WcxawK7Vco8inFTTXM18ZzmgC6AGgRFBRWPoQqBqpTQJAfNBXCG5n7PnZDFhoXqHPs5uGzZC3n2ZQ7Xf7a7OoN3jgjQT8/c9roDOn4jrhuPCzr2UFyygIIJh11D1yHSsnfu5kgd4XZ01QNYRXlYap82EM2D7eQXGms1KCacEm0HbkXuCCDk5LVse0fa0Qh9q/o8Wb9r3dzFS1Ic8ZBawhkCuG6MLwIDAQAB"
+}

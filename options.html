@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tab Organizer — Options</title>
+  <style>
+    @font-face { font-family: 'Space Grotesk'; font-weight: 400; font-display: swap; src: url('fonts/space-grotesk-400.woff2') format('woff2'); }
+    @font-face { font-family: 'Space Grotesk'; font-weight: 500; font-display: swap; src: url('fonts/space-grotesk-500.woff2') format('woff2'); }
+    @font-face { font-family: 'Space Grotesk'; font-weight: 700; font-display: swap; src: url('fonts/space-grotesk-700.woff2') format('woff2'); }
+    :root {
+      --bg:#0e0f13; --surface:#16181f; --surface-2:#1c1f29; --surface-3:#232734;
+      --border:#2a2f3c; --text:#e9ebf2; --muted:#888ea3; --accent:#7c6cff; --accent-hi:#948aff;
+      --accent-dim:rgba(124,108,255,.14); --danger:#ff6b81; --ok:#5fd0a0; --radius:10px;
+    }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { background:var(--bg); color:var(--text); font-family:'Space Grotesk',sans-serif; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased; padding:40px 20px 80px; }
+    .wrap { max-width:660px; margin:0 auto; }
+    header.top { display:flex; align-items:center; gap:11px; margin-bottom:6px; }
+    .mark { width:22px; height:22px; border-radius:7px; background:linear-gradient(135deg,var(--accent),#c4b5ff); box-shadow:0 0 16px var(--accent-dim); }
+    h1 { font-size:20px; font-weight:700; letter-spacing:-0.01em; }
+    .sub { color:var(--muted); font-size:13px; margin-bottom:30px; }
+    section { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:20px; margin-bottom:18px; }
+    h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin-bottom:4px; }
+    .hint { color:var(--muted); font-size:12.5px; margin-bottom:16px; }
+    .hint code { background:var(--surface-3); padding:1px 5px; border-radius:4px; font-family:inherit; color:var(--accent-hi); }
+
+    label.field { display:block; font-size:12px; color:var(--muted); margin-bottom:6px; }
+    input[type=text], input[type=password], input[type=number], select {
+      font-family:inherit; font-size:13px; color:var(--text); background:var(--surface-2);
+      border:1px solid var(--border); border-radius:8px; padding:8px 10px; width:100%;
+      transition:border-color .14s ease;
+    }
+    input:focus, select:focus { outline:none; border-color:var(--accent); }
+    input::placeholder { color:#5b6072; }
+
+    .row-inline { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+    .row-inline .grow { flex:1; min-width:120px; }
+    .switch { display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none; }
+    .switch input { position:absolute; opacity:0; }
+    .track { width:38px; height:22px; border-radius:999px; background:var(--surface-3); border:1px solid var(--border); position:relative; transition:.18s; }
+    .thumb { position:absolute; top:2px; left:2px; width:16px; height:16px; border-radius:50%; background:var(--muted); transition:.18s; }
+    .switch input:checked + .track { background:var(--accent-dim); border-color:var(--accent); }
+    .switch input:checked + .track .thumb { transform:translateX(16px); background:var(--accent-hi); }
+    .num { width:84px !important; }
+
+    /* Rules table */
+    .rules-head, .rule-row { display:grid; grid-template-columns: 1fr 110px 1fr 132px 34px; gap:10px; align-items:center; }
+    .rules-head { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin-bottom:10px; padding:0 2px; }
+    .rule-row { margin-bottom:9px; }
+    .swatch-wrap { position:relative; display:flex; align-items:center; gap:7px; }
+    .swatch { width:13px; height:13px; border-radius:50%; flex:none; box-shadow:0 0 0 3px rgba(255,255,255,.04); }
+    .swatch-wrap select { padding-left:9px; }
+    .del { background:var(--surface-2); border:1px solid var(--border); color:var(--muted); border-radius:8px; height:35px; cursor:pointer; font-size:15px; transition:.14s; }
+    .del:hover { color:var(--danger); border-color:rgba(255,107,129,.4); }
+
+    .btn { font-family:inherit; font-size:13px; font-weight:500; cursor:pointer; border-radius:9px; padding:9px 15px; border:1px solid var(--border); background:var(--surface-2); color:var(--text); transition:.14s; }
+    .btn:hover { background:var(--surface-3); }
+    .btn-primary { background:var(--accent); border-color:var(--accent); color:#0c0c14; font-weight:700; }
+    .btn-primary:hover { background:var(--accent-hi); border-color:var(--accent-hi); }
+    .btn-row { display:flex; gap:10px; align-items:center; margin-top:16px; flex-wrap:wrap; }
+    .spacer { flex:1; }
+    .toast { font-size:12.5px; color:var(--ok); opacity:0; transition:opacity .2s; }
+    .toast.show { opacity:1; }
+    .toast.err { color:var(--danger); }
+    .show-key { font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px; cursor:pointer; margin-top:9px; }
+    a { color:var(--accent-hi); text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .btn:focus-visible, .del:focus-visible, .link:focus-visible, .show-key input:focus-visible { outline:2px solid var(--accent-hi); outline-offset:2px; }
+    .switch input:focus-visible + .track { outline:2px solid var(--accent-hi); outline-offset:2px; }
+    .engine { display:flex; align-items:center; gap:9px; font-size:13px; margin-bottom:14px; }
+    .status-dot { width:9px; height:9px; border-radius:50%; background:var(--muted); flex:none; }
+    .status-dot.ok { background:var(--ok); box-shadow:0 0 8px rgba(95,208,160,.5); }
+    .status-dot.bad { background:var(--danger); }
+    .muted { color:var(--muted); }
+    details.fallback { margin-top:6px; }
+    details.fallback summary { cursor:pointer; color:var(--muted); font-size:12.5px; list-style:none; }
+    details.fallback summary::-webkit-details-marker { display:none; }
+    details.fallback summary::before { content:'▸ '; }
+    details.fallback[open] summary::before { content:'▾ '; }
+    details.fallback > div { margin-top:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <span class="mark"></span>
+      <h1>Tab Organizer</h1>
+    </header>
+    <p class="sub">Custom rules, grouping threshold, and the Anthropic key for smart grouping.</p>
+
+    <section>
+      <h2>General</h2>
+      <div class="row-inline" style="margin-bottom:16px">
+        <label class="switch">
+          <input type="checkbox" id="autoEnabled" />
+          <span class="track"><span class="thumb"></span></span>
+          <span style="font-size:13px">Automatic grouping</span>
+        </label>
+        <label class="switch">
+          <input type="checkbox" id="smartAuto" />
+          <span class="track"><span class="thumb"></span></span>
+          <span style="font-size:13px">Smart (AI) auto-grouping</span>
+        </label>
+      </div>
+      <p class="hint">With <strong>Smart</strong> on, new tabs are clustered by topic using Claude (incrementally, as you open them — see <em>Smart grouping</em> below for setup). With it off, tabs group instantly by website. Domains with fewer than the threshold of open tabs stay ungrouped (domain mode only).</p>
+      <div>
+        <label class="field" for="minTabs">Minimum tabs per group (domain mode)</label>
+        <input type="number" id="minTabs" class="num" min="1" max="20" step="1" />
+      </div>
+    </section>
+
+    <section>
+      <h2>Custom rules</h2>
+      <p class="hint">Rules win over domain grouping. <strong>Match</strong> is a domain (<code>github.com</code> — also matches subdomains), a URL glob (<code>https://*.figma.com/*</code>), or a regex. Tabs sharing a group name merge into one group.</p>
+      <div class="rules-head">
+        <span>Match</span><span>Type</span><span>Group name</span><span>Color</span><span></span>
+      </div>
+      <div id="rulesBody"></div>
+      <div class="btn-row">
+        <button class="btn" id="addRule">+ Add rule</button>
+        <button class="btn" id="restoreRules">Restore defaults</button>
+        <span class="spacer"></span>
+        <span class="toast" id="rulesToast"></span>
+        <button class="btn btn-primary" id="saveRules">Save rules</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Smart grouping</h2>
+      <p class="hint"><strong>Smart group</strong> clusters tabs by topic using Claude (model <code>claude-haiku-4-5</code>). It prefers your local <strong>Claude CLI</strong> — no API key, uses your existing Claude sign-in.</p>
+      <div class="engine">
+        <span class="status-dot" id="cliDot"></span>
+        <span id="cliStatus" class="muted">Checking Claude CLI…</span>
+        <span class="spacer"></span>
+        <button class="btn" id="testCli">Test connection</button>
+      </div>
+      <p class="hint">One-time setup: run <code>native/install.sh</code> from the extension folder in a terminal, then fully quit &amp; reopen the browser.</p>
+
+      <details class="fallback">
+        <summary>Optional fallback: Anthropic API key</summary>
+        <div>
+          <p class="hint">Used only if the Claude CLI bridge isn't available. Stored locally on this device (not synced). Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.</p>
+          <label class="field" for="apiKey">API key</label>
+          <input type="password" id="apiKey" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+          <label class="show-key"><input type="checkbox" id="showKey" /> Show key</label>
+          <div class="btn-row">
+            <span class="spacer"></span>
+            <span class="toast" id="keyToast"></span>
+            <button class="btn btn-primary" id="saveKey">Save key</button>
+          </div>
+        </div>
+      </details>
+    </section>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>
