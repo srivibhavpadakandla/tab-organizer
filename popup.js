@@ -160,6 +160,18 @@ async function init() {
 
   $('openOptions').addEventListener('click', () => chrome.runtime.openOptionsPage());
 
+  $('undoBtn').addEventListener('click', async () => {
+    setStatus('Undoing…');
+    try {
+      const res = await send('undo');
+      setStatus(res && res.ok ? 'Restored previous grouping' : (res && res.error) || 'Nothing to undo', res && res.ok ? 'ok' : 'err');
+    } catch (e) {
+      setStatus(String((e && e.message) || e), 'err');
+    } finally {
+      refreshGroups();
+    }
+  });
+
   refreshGroups();
 }
 

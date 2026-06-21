@@ -1,0 +1,10 @@
+{
+  "name": "tab-organizer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome MV3 extension that auto-organizes tabs into groups by domain, with Claude-powered smart grouping.",
+  "type": "module",
+  "scripts": {
+    "test": "node test/psl.test.mjs && node test/grouping.test.mjs"
+  }
+}

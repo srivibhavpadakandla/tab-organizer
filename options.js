@@ -7,7 +7,7 @@ const COLOR_HEX = {
 };
 const RULE_TYPES = ['domain', 'glob', 'regex'];
 
-const DEFAULT_SETTINGS = { autoGroupEnabled: true, smartAuto: true, minTabs: 2 };
+const DEFAULT_SETTINGS = { autoGroupEnabled: true, smartAuto: true, minTabs: 2, denylist: [] };
 const DEFAULT_RULES = [
   { type: 'domain', match: 'github.com', groupName: 'Code', color: 'blue' },
   { type: 'domain', match: 'gitlab.com', groupName: 'Code', color: 'blue' },
@@ -124,7 +124,17 @@ async function load() {
   $('autoEnabled').checked = !!settings.autoGroupEnabled;
   $('smartAuto').checked = settings.smartAuto !== false;
   $('apiKey').value = local.apiKey || '';
+  $('denylist').value = (settings.denylist || []).join('\n');
   renderRules(rules);
+  refreshLearned();
+}
+
+async function refreshLearned() {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'learned-count' });
+    const n = (res && res.count) || 0;
+    $('learnedStatus').textContent = `Learned ${n} site${n === 1 ? '' : 's'}`;
+  } catch (e) { /* worker asleep */ }
 }
 
 async function saveSettings() {
@@ -216,6 +226,29 @@ function init() {
 
   $('showKey').addEventListener('change', (e) => {
     $('apiKey').type = e.target.checked ? 'text' : 'password';
+  });
+
+  $('saveDeny').addEventListener('click', async () => {
+    try {
+      const denylist = [...new Set($('denylist').value.split('\n').map((s) => s.trim().toLowerCase()).filter(Boolean))];
+      const sync = await chrome.storage.sync.get('settings');
+      const current = { ...DEFAULT_SETTINGS, ...(sync.settings || {}) };
+      await chrome.storage.sync.set({ settings: { ...current, denylist } });
+      $('denylist').value = denylist.join('\n');
+      toast($('denyToast'), `Saved ${denylist.length} site${denylist.length === 1 ? '' : 's'}`);
+    } catch (e) {
+      toast($('denyToast'), String((e && e.message) || e), true);
+    }
+  });
+
+  $('clearLearned').addEventListener('click', async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'clear-learned' });
+      toast($('learnToast'), `Cleared ${(res && res.cleared) || 0}`);
+      refreshLearned();
+    } catch (e) {
+      toast($('learnToast'), String((e && e.message) || e), true);
+    }
   });
 
   $('saveKey').addEventListener('click', async () => {

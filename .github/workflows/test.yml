@@ -1,0 +1,22 @@
+name: test
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Syntax check
+        run: |
+          node --check popup.js
+          node --check options.js
+          node --check native/claude_host.js
+          node --input-type=module --check < background.js
+          node -e "JSON.parse(require('fs').readFileSync('manifest.json','utf8'))"
+      - name: Tests
+        run: npm test

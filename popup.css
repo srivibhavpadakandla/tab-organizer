@@ -134,6 +134,7 @@ body {
 
 /* Footer */
 .foot { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; padding-top: 11px; border-top: 1px solid var(--border); }
+.foot-links { display: flex; gap: 13px; }
 .link { background: none; border: none; color: var(--muted); font-family: inherit; font-size: 11.5px; cursor: pointer; padding: 0; }
 .link:hover { color: var(--accent-hi); }
 .status { font-size: 11px; color: var(--muted); text-align: right; max-width: 170px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

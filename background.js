@@ -17,6 +17,9 @@ const URL_TEST_CAP = 2000; // cap URL length fed to user regex/glob (ReDoS guard
 const OTHER_TITLE = 'Other'; // catch-all group for singleton tabs
 const OTHER_COLOR = 'grey';
 const OTHER_KEY = 'other';
+const LEARNED_KEY = 'learnedMap'; // storage.local: { [domain]: { groupName, color, ts } }
+const LEARNED_MAX = 800; // cap learned entries; evict oldest beyond this
+const UNDO_KEY = 'undoSnapshot'; // storage.session: last manual grouping snapshot
 
 const NATIVE_HOST = 'com.tab_organizer.claude';
 const NATIVE_TIMEOUT_MS = 90000; // a CLI cluster call can take 10-40s
@@ -24,7 +27,7 @@ const OWNED_KEY = 'ownedGroups'; // storage.session: { [groupId]: { key, color }
 
 // smartAuto on by default: the automatic pass clusters tabs by topic with
 // Claude (incrementally). Falls back to instant domain grouping with no backend.
-const DEFAULT_SETTINGS = { autoGroupEnabled: true, smartAuto: true, minTabs: 2 };
+const DEFAULT_SETTINGS = { autoGroupEnabled: true, smartAuto: true, minTabs: 2, denylist: [] };
 const DEFAULT_RULES = [
   { type: 'domain', match: 'github.com', groupName: 'Code', color: 'blue' },
   { type: 'domain', match: 'gitlab.com', groupName: 'Code', color: 'blue' },
@@ -53,6 +56,37 @@ async function getOwned() {
 }
 async function setOwned(map) {
   try { await chrome.storage.session.set({ [OWNED_KEY]: map }); } catch (e) {}
+}
+// Learned domain→group memory (makes smart mode instant for repeat domains).
+async function getLearned() {
+  try { const o = await chrome.storage.local.get(LEARNED_KEY); return o[LEARNED_KEY] || {}; }
+  catch { return {}; }
+}
+async function setLearned(map) {
+  // Evict oldest entries beyond the cap.
+  const keys = Object.keys(map);
+  if (keys.length > LEARNED_MAX) {
+    keys.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
+    for (const k of keys.slice(0, keys.length - LEARNED_MAX)) delete map[k];
+  }
+  try { await chrome.storage.local.set({ [LEARNED_KEY]: map }); } catch (e) {}
+}
+function recordLearned(map, domain, groupName, color) {
+  if (!domain || !groupName) return;
+  map[domain] = { groupName, color, ts: Date.now() };
+}
+
+// ── Privacy helpers ──────────────────────────────────────────────────────────
+// Strip query string + fragment before anything leaves the device for the AI.
+function sanitizeUrl(url) {
+  try { const u = new URL(url); return u.origin + u.pathname; } catch { return ''; }
+}
+function normDenyEntry(d) {
+  return String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/^\*?\.?/, '');
+}
+function hostDenied(host, denylist) {
+  if (!host || !denylist || !denylist.length) return false;
+  return denylist.some((d) => d && (host === d || host.endsWith('.' + d)));
 }
 
 // ── Colour helpers ───────────────────────────────────────────────────────────
@@ -169,6 +203,7 @@ async function computeTarget(tab, compiled) {
 async function groupWindow(windowId) {
   const [settings, rules] = await Promise.all([getSettings(), getRules()]);
   const compiled = compileRules(rules);
+  const denylist = (settings.denylist || []).map(normDenyEntry).filter(Boolean);
   const tabs = await chrome.tabs.query({ windowId });
   const existingGroups = await chrome.tabGroups.query({ windowId });
   const existingIds = new Set(existingGroups.map((g) => g.id));
@@ -188,6 +223,7 @@ async function groupWindow(windowId) {
   const buckets = new Map(); // key -> { key, title, color, fromRule, tabs:[] }
   for (const tab of tabs) {
     if (!isEligibleTab(tab)) continue;
+    if (hostDenied(hostnameOf(tab.url || tab.pendingUrl || ''), denylist)) continue; // privacy: never auto-group
     const target = await computeTarget(tab, compiled);
     if (!target) continue;
     let b = buckets.get(target.key);
@@ -431,10 +467,15 @@ async function requestClusters(payload, existingGroups) {
 // prompt). Returns true if AI ran (or there was nothing to do), false if no
 // backend is available so the caller can fall back to domain grouping.
 async function smartAutoClassify(windowId) {
-  const eligible = (await chrome.tabs.query({ windowId })).filter(isEligibleTab);
+  const settings = await getSettings();
+  const denylist = (settings.denylist || []).map(normDenyEntry).filter(Boolean);
+  // Privacy: never feed incognito or denylisted tabs to the AI.
+  const eligible = (await chrome.tabs.query({ windowId }))
+    .filter(isEligibleTab)
+    .filter((t) => !t.incognito && !hostDenied(hostnameOf(t.url || ''), denylist));
   const ungrouped = eligible.filter((t) => t.groupId === TAB_GROUP_ID_NONE);
-  // Only spend an AI call when there's a genuinely new (ungrouped) tab. Otherwise
-  // just reconcile the "Other" group (e.g. a group that dropped to 1 tab).
+  // Only do work when there's a genuinely new (ungrouped) tab; otherwise just
+  // reconcile "Other" (e.g. a group that dropped to 1 tab).
   if (!ungrouped.length) { await consolidateSingletons(windowId); return true; }
 
   const owned = await getOwned();
@@ -443,37 +484,70 @@ async function smartAutoClassify(windowId) {
   for (const idStr of Object.keys(owned)) if (!existingIds.has(Number(idStr))) delete owned[idStr];
 
   const otherGroup = existingGroups.find((g) => owned[g.id] && owned[g.id].key === OTHER_KEY) || null;
-  // Reconsider new tabs AND current "Other" residents, so a singleton can rejoin
+  // Reconsider new tabs AND current "Other" residents so a singleton can rejoin
   // a real topic group once a sibling appears.
   const otherResidents = otherGroup ? eligible.filter((t) => t.groupId === otherGroup.id) : [];
   const candidates = [...ungrouped, ...otherResidents];
-  const ownedTitles = [...new Set(existingGroups.filter((g) => owned[g.id] && owned[g.id].key !== OTHER_KEY && g.title).map((g) => g.title))];
 
-  const payload = candidates.map((t, i) => ({ id: i, title: (t.title || '').slice(0, 200), url: t.url }));
-  let clusters;
-  try { ({ clusters } = await requestClusters(payload, ownedTitles)); }
-  catch (e) { return false; } // no CLI/key → let caller use domain grouping
+  // Split by the learned cache: known domains group instantly (no AI); only
+  // unseen domains need a model call.
+  const learned = await getLearned();
+  const domainOf = new Map();
+  const known = [], unknown = [];
+  for (const t of candidates) {
+    const dom = await groupKeyForHost(hostnameOf(t.url || ''));
+    domainOf.set(t.id, dom);
+    const hit = dom && learned[dom];
+    if (hit) known.push({ tab: t, groupName: hit.groupName, color: hit.color });
+    else unknown.push(t);
+  }
+
+  // Accumulate per-group assignments: groupName -> { color, ids[] }.
+  const byName = new Map();
+  const add = (name, color, id) => {
+    const k = (String(name || 'Group').trim() || 'Group').slice(0, 40);
+    let e = byName.get(k);
+    if (!e) { e = { color, ids: [] }; byName.set(k, e); }
+    e.ids.push(id);
+  };
+  for (const k of known) add(k.groupName, k.color, k.tab.id);
+
+  let via = 'cache';
+  if (unknown.length) {
+    const ownedTitles = [...new Set(existingGroups.filter((g) => owned[g.id] && owned[g.id].key !== OTHER_KEY && g.title).map((g) => g.title))];
+    const payload = unknown.map((t, i) => ({ id: i, title: (t.title || '').slice(0, 200), url: sanitizeUrl(t.url) }));
+    let clusters;
+    try { ({ clusters, via } = await requestClusters(payload, ownedTitles)); }
+    catch (e) { return false; } // no backend → caller falls back to domain grouping
+    for (const cl of (Array.isArray(clusters) ? clusters : [])) {
+      const title = (String((cl && cl.groupName) || 'Group').trim() || 'Group').slice(0, 40);
+      const color = normalizeColor(cl && cl.color) || autoColorForKey(title);
+      for (const i of clusterTabIds(cl)) { const t = unknown[i]; if (t) add(title, color, t.id); }
+    }
+  }
 
   const groupsByKey = new Map();
   for (const g of existingGroups) { const rec = owned[g.id]; if (rec && rec.key !== OTHER_KEY && !groupsByKey.has(rec.key)) groupsByKey.set(rec.key, g); }
-  for (const cl of (Array.isArray(clusters) ? clusters : [])) {
-    const title = (String((cl && cl.groupName) || 'Group').trim() || 'Group').slice(0, 40);
-    const color = normalizeColor(cl && cl.color) || autoColorForKey(title);
-    const ids = clusterTabIds(cl).map((i) => candidates[i]).filter(Boolean).map((t) => t.id);
-    if (ids.length < 2) continue; // singletons → "Other" via consolidateSingletons
+  for (const [title, e] of byName) {
+    const color = e.color || autoColorForKey(title);
     const key = 'ai:' + title;
     const existing = groupsByKey.get(key);
-    let groupId = existing ? existing.id : null;
-    if (groupId === null) {
-      groupId = await chrome.tabs.group({ createProperties: { windowId }, tabIds: ids });
+    // Join an existing group of this name at any size; only CREATE one for >=2
+    // tabs (a lone tab stays ungrouped → "Other"). Either way, remember the
+    // domain→group mapping so a future sibling reforms the group.
+    if (existing) {
+      await chrome.tabs.group({ groupId: existing.id, tabIds: e.ids });
+      owned[existing.id] = { key, color };
+    } else if (e.ids.length >= 2) {
+      const groupId = await chrome.tabs.group({ createProperties: { windowId }, tabIds: e.ids });
       await chrome.tabGroups.update(groupId, { title, color });
       groupsByKey.set(key, { id: groupId, title, color });
-    } else {
-      await chrome.tabs.group({ groupId, tabIds: ids });
+      owned[groupId] = { key, color };
     }
-    owned[groupId] = { key, color };
+    for (const id of e.ids) recordLearned(learned, domainOf.get(id), title, color);
   }
   await setOwned(owned);
+  await setLearned(learned);
   await consolidateSingletons(windowId);
   return true;
 }
@@ -495,11 +569,14 @@ async function autoPass(windowId) {
 // Full re-cluster of ALL eligible tabs (manual "Smart group" / switching to
 // smart mode). Reconciles leftovers so it is idempotent.
 async function smartGroupWindow(windowId) {
-  const tabs = (await chrome.tabs.query({ windowId })).filter(isEligibleTab);
+  const settings = await getSettings();
+  const denylist = (settings.denylist || []).map(normDenyEntry).filter(Boolean);
+  const tabs = (await chrome.tabs.query({ windowId }))
+    .filter(isEligibleTab)
+    .filter((t) => !t.incognito && !hostDenied(hostnameOf(t.url || ''), denylist));
   if (tabs.length < 2) return { ok: true, groups: 0, note: 'Not enough tabs to cluster' };
-  // Stable integer id per tab — avoids the URL-collision / verbatim-echo
-  // fragility of matching the model's reply back by URL string.
-  const payload = tabs.map((t, i) => ({ id: i, title: (t.title || '').slice(0, 200), url: t.url }));
+  // Stable integer id per tab; URLs sanitised (no query/fragment) before sending.
+  const payload = tabs.map((t, i) => ({ id: i, title: (t.title || '').slice(0, 200), url: sanitizeUrl(t.url) }));
 
   let clusters, via;
   try { ({ clusters, via } = await requestClusters(payload, [])); }
@@ -507,6 +584,7 @@ async function smartGroupWindow(windowId) {
     await groupWindow(windowId); // graceful fall back to domain grouping
     return { ok: true, fellBack: true, via: 'domain', reason: String((e && e.message) || e) };
   }
+  const learned = await getLearned();
 
   const owned = await getOwned();
   const existingGroups = await chrome.tabGroups.query({ windowId });
@@ -520,7 +598,11 @@ async function smartGroupWindow(windowId) {
   for (const cl of clusters) {
     const title = (String((cl && cl.groupName) || 'Group').trim() || 'Group').slice(0, 40);
     const color = normalizeColor(cl && cl.color) || autoColorForKey(title);
-    const ids = clusterTabIds(cl).map((i) => tabs[i]).filter(Boolean).map((t) => t.id);
+    const tabObjs = clusterTabIds(cl).map((i) => tabs[i]).filter(Boolean);
+    // Remember domain→group for every clustered tab (even singletons) so smart
+    // mode gets instant + cheap on repeat domains.
+    for (const t of tabObjs) recordLearned(learned, await groupKeyForHost(hostnameOf(t.url || '')), title, color);
+    const ids = tabObjs.map((t) => t.id);
     if (ids.length < 2) continue; // singleton clusters fall through to "Other"
     ids.forEach((id) => placed.add(id));
     const key = 'ai:' + title;
@@ -544,6 +626,7 @@ async function smartGroupWindow(windowId) {
     .map((t) => t.id);
   if (toFree.length) { try { await chrome.tabs.ungroup(toFree); } catch (e) {} }
   await setOwned(owned);
+  await setLearned(learned);
   await consolidateSingletons(windowId);
   return { ok: true, groups: applied, via, placed: placed.size, total: tabs.length };
 }
@@ -563,16 +646,94 @@ function scheduleGroup(windowId) {
 }
 
 // ── Event wiring ─────────────────────────────────────────────────────────────
+// ── Undo (manual operations) ─────────────────────────────────────────────────
+// Snapshot group membership before a manual Group/Smart/Ungroup so it can be
+// restored. Auto-grouping does NOT snapshot (it would make undo meaningless).
+async function snapshotManual(windowIds) {
+  const windows = {};
+  for (const wid of windowIds) {
+    const groups = await chrome.tabGroups.query({ windowId: wid });
+    const tabs = await chrome.tabs.query({ windowId: wid });
+    const byGroup = {};
+    for (const t of tabs) if (t.groupId !== TAB_GROUP_ID_NONE) (byGroup[t.groupId] || (byGroup[t.groupId] = [])).push(t.id);
+    windows[wid] = groups
+      .filter((g) => (byGroup[g.id] || []).length)
+      .map((g) => ({ title: g.title || '', color: g.color, collapsed: g.collapsed, tabIds: byGroup[g.id] }));
+  }
+  try { await chrome.storage.session.set({ [UNDO_KEY]: { windows } }); } catch (e) {}
+}
+async function restoreSnapshot() {
+  let snap;
+  try { snap = (await chrome.storage.session.get(UNDO_KEY))[UNDO_KEY]; } catch { snap = null; }
+  if (!snap || !snap.windows || !Object.keys(snap.windows).length) return { ok: false, error: 'Nothing to undo' };
+  for (const widStr of Object.keys(snap.windows)) {
+    const wid = Number(widStr);
+    const tabs = await chrome.tabs.query({ windowId: wid });
+    const live = new Set(tabs.map((t) => t.id));
+    const grouped = tabs.filter((t) => t.groupId !== TAB_GROUP_ID_NONE && !t.pinned).map((t) => t.id);
+    if (grouped.length) { try { await chrome.tabs.ungroup(grouped); } catch (e) {} }
+    for (const g of snap.windows[widStr]) {
+      const ids = g.tabIds.filter((id) => live.has(id));
+      if (!ids.length) continue;
+      const gid = await chrome.tabs.group({ createProperties: { windowId: wid }, tabIds: ids });
+      await chrome.tabGroups.update(gid, { title: g.title, color: g.color, collapsed: g.collapsed });
+    }
+  }
+  await setOwned({}); // restored groups are user-intended; release ownership
+  try { await chrome.storage.session.remove(UNDO_KEY); } catch (e) {}
+  return { ok: true };
+}
+
+// ── Context menu ─────────────────────────────────────────────────────────────
+function setupContextMenus() {
+  if (!chrome.contextMenus) return;
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({ id: 'to-parent', title: 'Tab Organizer', contexts: ['page'] });
+    chrome.contextMenus.create({ id: 'to-pin', parentId: 'to-parent', title: 'Always give this site its own group', contexts: ['page'] });
+    chrome.contextMenus.create({ id: 'to-deny', parentId: 'to-parent', title: "Don't auto-group this site", contexts: ['page'] });
+    chrome.contextMenus.create({ id: 'to-undo', parentId: 'to-parent', title: 'Undo last grouping', contexts: ['page'] });
+  });
+}
+if (chrome.contextMenus) {
+  chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+    try {
+      const host = hostnameOf(info.pageUrl || (tab && tab.url) || '');
+      const dom = (await groupKeyForHost(host)) || host;
+      if (!dom) return;
+      if (info.menuItemId === 'to-deny') {
+        const s = await getSettings();
+        const denylist = [...new Set([...(s.denylist || []), dom])].filter(Boolean);
+        await chrome.storage.sync.set({ settings: { ...s, denylist } });
+        const ids = (await chrome.tabs.query({}))
+          .filter((t) => t.groupId !== TAB_GROUP_ID_NONE && hostDenied(hostnameOf(t.url || ''), [normDenyEntry(dom)]))
+          .map((t) => t.id);
+        if (ids.length) { try { await chrome.tabs.ungroup(ids); } catch (e) {} }
+      } else if (info.menuItemId === 'to-pin') {
+        const rules = [...(await getRules())];
+        if (!rules.some((r) => (r.type || 'domain') === 'domain' && normDenyEntry(r.match) === dom)) {
+          rules.push({ type: 'domain', match: dom, groupName: titleFromKey(dom), color: autoColorForKey(dom) });
+          await chrome.storage.sync.set({ rules });
+        }
+        if (tab) { await snapshotManual([tab.windowId]); await groupWindow(tab.windowId); }
+      } else if (info.menuItemId === 'to-undo') {
+        await restoreSnapshot();
+      }
+    } catch (e) { console.warn('[TabOrganizer] context menu', e); }
+  });
+}
+
 chrome.runtime.onInstalled.addListener(async () => {
   const cur = await chrome.storage.sync.get(['settings', 'rules']);
   const toSet = {};
   if (!cur.settings) toSet.settings = DEFAULT_SETTINGS;
   if (!Array.isArray(cur.rules)) toSet.rules = DEFAULT_RULES;
   if (Object.keys(toSet).length) await chrome.storage.sync.set(toSet);
+  setupContextMenus();
   await autoPassAll();
 });
 
 chrome.runtime.onStartup.addListener(async () => {
+  setupContextMenus();
   await autoPassAll();
 });
 
@@ -608,15 +769,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // keep the channel open for the async response
 });
 
+async function allWindowIds() {
+  return (await chrome.windows.getAll({ windowTypes: ['normal'] })).map((w) => w.id);
+}
+
 async function handleMessage(msg) {
   switch (msg && msg.type) {
-    case 'group-all': await groupAllWindows(); return { ok: true };
-    case 'group-current': { await groupWindow(await focusedWindowId()); return { ok: true }; }
-    case 'ungroup-all': await ungroupAll(); return { ok: true };
+    case 'group-all': { await snapshotManual(await allWindowIds()); await groupAllWindows(); return { ok: true }; }
+    case 'group-current': { const wid = await focusedWindowId(); await snapshotManual([wid]); await groupWindow(wid); return { ok: true }; }
+    case 'ungroup-all': { await snapshotManual(await allWindowIds()); await ungroupAll(); return { ok: true }; }
     case 'collapse-all': await collapseAllButActive(); return { ok: true };
-    case 'smart-group': return await smartGroupWindow(await focusedWindowId());
+    case 'smart-group': { const wid = await focusedWindowId(); await snapshotManual([wid]); return await smartGroupWindow(wid); }
     case 'list-groups': return { ok: true, groups: await listGroups(await focusedWindowId()) };
     case 'test-native': return await pingNative();
+    case 'undo': return await restoreSnapshot();
+    case 'clear-learned': {
+      const n = Object.keys(await getLearned()).length;
+      try { await chrome.storage.local.remove(LEARNED_KEY); } catch (e) {}
+      return { ok: true, cleared: n };
+    }
+    case 'learned-count': return { ok: true, count: Object.keys(await getLearned()).length };
     default: return { ok: false, error: 'unknown message: ' + (msg && msg.type) };
   }
 }

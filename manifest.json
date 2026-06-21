@@ -7,7 +7,8 @@
     "tabs",
     "tabGroups",
     "storage",
-    "nativeMessaging"
+    "nativeMessaging",
+    "contextMenus"
   ],
   "host_permissions": [
     "https://api.anthropic.com/*"

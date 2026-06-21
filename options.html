@@ -137,6 +137,14 @@
       </div>
       <p class="hint">One-time setup: run <code>native/install.sh</code> from the extension folder in a terminal, then fully quit &amp; reopen the browser.</p>
 
+      <div class="engine">
+        <span id="learnedStatus" class="muted">Learned 0 sites</span>
+        <span class="spacer"></span>
+        <span class="toast" id="learnToast"></span>
+        <button class="btn" id="clearLearned">Clear learned data</button>
+      </div>
+      <p class="hint">Smart mode remembers which group each site belongs to, so repeat sites are sorted <strong>instantly</strong> with no AI call. Clearing this makes it re-learn from scratch.</p>
+
       <details class="fallback">
         <summary>Optional fallback: Anthropic API key</summary>
         <div>
@@ -151,6 +159,18 @@
           </div>
         </div>
       </details>
+    </section>
+
+    <section>
+      <h2>Privacy</h2>
+      <p class="hint">Smart grouping sends tab titles + URLs to Claude. URLs are <strong>sanitised first</strong> — query strings and <code>#fragments</code> are stripped, so tokens in links are never sent. Incognito tabs are never sent.</p>
+      <label class="field" for="denylist">Never auto-group or send these sites (one domain per line)</label>
+      <textarea id="denylist" rows="4" placeholder="mybank.com&#10;health-portal.org&#10;localhost" spellcheck="false" style="font-family:inherit;font-size:13px;color:var(--text);background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;width:100%;resize:vertical"></textarea>
+      <div class="btn-row">
+        <span class="spacer"></span>
+        <span class="toast" id="denyToast"></span>
+        <button class="btn btn-primary" id="saveDeny">Save</button>
+      </div>
     </section>
   </div>
   <script src="options.js"></script>
