@@ -9,6 +9,14 @@
 
 ---
 
+## See it in action
+
+<p align="center">
+  <img src="docs/demo.gif" alt="Tab Organizer grouping tabs in real time" width="100%">
+</p>
+
+<p align="center"><sub>Animated demo (real group colors, popup &amp; logic): tabs auto-group by site as you browse, single-tab sites pool into <b>Other</b>, and reopening a known site groups it instantly with no AI call. · <a href="docs/demo.mp4">Watch MP4</a></sub></p>
+
 ## What it does
 
 Open a pile of tabs and Tab Organizer sorts them into tidy, colored tab groups for you, live, as you browse. Two modes:
