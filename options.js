@@ -169,7 +169,13 @@ async function checkCli(interactive) {
     } else {
       dot.className = 'status-dot bad';
       label.className = 'muted';
-      label.textContent = 'Claude CLI not set up — run native/install.sh, then restart the browser';
+      const err = (res && res.error) || '';
+      let hint = 'Not connected — double-click native/connect.command, then Test connection.';
+      if (/forbidden/i.test(err)) hint = 'Extension ID mismatch — re-run native/connect.command.';
+      else if (/not found/i.test(err)) hint = 'Not installed — double-click native/connect.command, then Test connection.';
+      else if (/exited|crash|terminated/i.test(err)) hint = 'Host failed to start — check node & claude are installed, then re-run native/connect.command.';
+      label.textContent = hint;
+      label.title = err;
     }
   } catch (e) {
     dot.className = 'status-dot bad';

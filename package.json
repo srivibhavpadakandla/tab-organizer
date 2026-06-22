@@ -5,6 +5,6 @@
   "description": "Chrome MV3 extension that auto-organizes tabs into groups by domain, with Claude-powered smart grouping.",
   "type": "module",
   "scripts": {
-    "test": "node test/psl.test.mjs && node test/grouping.test.mjs"
+    "test": "node test/psl.test.mjs && node test/grouping.test.mjs && node test/native-host.test.mjs"
   }
 }

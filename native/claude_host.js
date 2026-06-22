@@ -6,7 +6,7 @@
 // cluster tabs — so smart-grouping uses the user's existing Claude auth and no
 // API key is needed.
 
-const { spawn } = require('child_process');
+import { spawn } from 'child_process';
 
 const CLAUDE = process.env.CLAUDE_BIN || 'claude';
 const MODEL = process.env.CLAUDE_MODEL || 'claude-haiku-4-5';

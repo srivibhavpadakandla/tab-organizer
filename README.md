@@ -59,11 +59,12 @@ Single-tab sites don't clutter your bar — they pool into one **Other** group, 
 
 **Option A · Local Claude CLI (recommended, no API key)**
 Requires [`claude`](https://www.anthropic.com/claude-code) (signed in) and `node` on your PATH.
+**Double-click `native/connect.command`** in the folder — or run it from a terminal:
 ```bash
 cd tab-organizer
 bash native/install.sh
 ```
-Then **fully quit and reopen** your browser. In the extension's **Options → Smart grouping**, click **Test connection** — it should say *Claude CLI connected*.
+Then open **Options → Smart grouping** and click **Test connection** — it should say *Claude CLI connected*. (If not, fully quit and reopen your browser once.)
 
 **Option B · Anthropic API key**
 Paste a key in **Options → Smart grouping → API key** (stored locally, never synced).
